@@ -24,7 +24,7 @@ def get_function_definition(file_path: str) -> list[FunctionDefinition] | None:
         with open(file_path, "r") as file:
             try:
                 content = json.load(file)
-                if not isinstance(content ,list):
+                if not isinstance(content, list):
                     print(f"Invalid format in {file_path}: expected a JSON array")
                     return None
                 result = []

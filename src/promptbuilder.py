@@ -1,5 +1,6 @@
 from src.parser import FunctionCalling, FunctionDefinition
 
+
 def build_prompt(
         function_definitions: list[FunctionDefinition],
         function_calling: FunctionCalling
