@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field, ValidationError
 import json
+from llm_sdk import Small_LLM_Model
+
 
 class ParameterType(BaseModel):
     type: str
@@ -64,5 +66,14 @@ def get_function_calling(file_path: str) -> list[FunctionCalling]:
         return None 
     return result      
 
-get_function_definition("data/input/functions_definition.json")
-get_function_calling("data/input/function_calling_tests.json")
+
+def vocab_loader(model: Small_LLM_Model) -> dict[int, str] | None:
+    vocab_path = model.get_path_to_vocab_file()
+    try:
+        with open(vocab_path, "r", encoding="utf-8")as f:
+            vocab = json.load(f)
+        new_vocab = {token_id: token for token, token_id in vocab.items()}
+    except FileNotFoundError:
+        print("Error wrong path or path does not exist")
+        return None
+    return new_vocab
