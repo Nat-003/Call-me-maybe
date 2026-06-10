@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, ValidationError
 import json
-from llm_sdk import Small_LLM_Model
+from typing import Any
+
 
 
 class ParameterType(BaseModel):
@@ -67,7 +68,7 @@ def get_function_calling(file_path: str) -> list[FunctionCalling]:
     return result      
 
 
-def vocab_loader(model: Small_LLM_Model) -> dict[int, str] | None:
+def vocab_loader(model: Any) -> dict[int, str] | None:
     vocab_path = model.get_path_to_vocab_file()
     try:
         with open(vocab_path, "r", encoding="utf-8")as f:

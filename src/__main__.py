@@ -1,7 +1,9 @@
+
 from src.parser import get_function_calling, get_function_definition, vocab_loader
 from src.promptbuilder import build_prompt
 import argparse
 from llm_sdk import Small_LLM_Model
+from src.decoder import Decoder
 import json
 
 
@@ -13,15 +15,17 @@ def main() -> None:
         # parser.add_argument("--output", type=str)
         args = parser.parse_args()         
         # args.output
-        result =  get_function_definition(args.functions_definition)
-        result2 = get_function_calling(args.input )
-        if result is None or result2 is None:
+        function_definition =  get_function_definition(args.functions_definition)
+        function_calling = get_function_calling(args.input )
+        if function_definition is None or function_calling is None:
             return
         model = Small_LLM_Model()
-        for prompt in result2:
-            built_prompt = build_prompt(result, prompt)
+        for prompt in function_calling:
+            built_prompt = build_prompt(function_definition, prompt)
+        vocab = vocab_loader(model)
+        decoder = Decoder(model, vocab, function_definition)
         
-        print(vocab_loader(model))
+        decoder._test()
             
     except FileNotFoundError:
         print("Invalide fiel path")
