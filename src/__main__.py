@@ -25,7 +25,7 @@ def main() -> None:
         vocab = vocab_loader(model)
         decoder = Decoder(model, vocab, function_definition)
         
-        decoder._test()
+        decoder.generate("test")
             
     except FileNotFoundError:
         print("Invalide fiel path")
