@@ -34,6 +34,14 @@ class Decoder:
                                         func.name: self.model.encode('"' + func.name + '"').tolist()[0]
                                         for func in self.function_definitions
                                         }
+        self.encoded_parameter_keys = {}
+        for func in self.function_definitions:
+            self.encoded_parameter_keys[func.name] = {
+                key: self.model.encode('"' + key + '"').tolist()[0]
+                for key in func.parameters.keys()
+            }
+        self.current_parameter_key = "" 
+        self.chosen_function_name = ""
         self.generated_tokens_within_state = []
 
     def _get_tokens_for_string(self, target: str) -> set[int]:
@@ -43,10 +51,6 @@ class Decoder:
                 result.add(token_id)
         return result
 
-    def debug(self, target):
-        for token_id, token_str in self.vocab.items():
-            if target in token_str:
-                print(f"{token_id} -> {token_str}")
     
     def _precompute_valid_tokens(self) -> dict[State, set[int]]:
         result = {}
@@ -94,7 +98,7 @@ class Decoder:
         for token_id, token_str in self.vocab.items():
             if token_str != "" and all(c.isdigit() or c == '.' or  c == '-' for c in token_str):
                 result.add(token_id)
-        return result
+        return result | self._get_tokens_for_string(",") | self._get_tokens_for_string("}")
 
     def _get_boolean_tokens(self) -> set[int]:
         result = set()
@@ -110,66 +114,113 @@ class Decoder:
                 result.add(token_id)
         return result
 
-    def _test(self):
-        bug = self._compute_tier2_tokens(self.encoded_name)
-        print(self.debug("true"))
-        print(self.debug("false"))
-        print(self.model.encode('"true"'))
-        print(self.model.encode('"false"'))
+    def _valid_parameter_key_tokens(self) -> set[int]:
+        result = set()
+        if self.chosen_function_name not in self.encoded_parameter_keys:
+            return result
+        
+        prefix_length = len(self.generated_tokens_within_state)
+        for encoded_key in self.encoded_parameter_keys[self.chosen_function_name].values():
+            if encoded_key[:prefix_length] == self.generated_tokens_within_state:
+                if prefix_length < len(encoded_key):
+                    result.add(encoded_key[prefix_length])
+        return result
 
     def _get_valid_tokens_for_function():
         pass
 
     def _mask_logits(self ,logits: Any, valid_tokens: set[int]) -> Any:
-        arr = logits.detach().numpy()
+        arr = np.array(logits)
         cpy = arr.copy()
         arr[:] = -float('inf')
         arr[list(valid_tokens)] = cpy[list(valid_tokens)]
         return arr
 
+    def _valid_function_name_tokens(self) -> set[int]:
+        result = set()
+        prefix_length = len(self.generated_tokens_within_state)
+        for tokens in self.encoded_function_names.values():
+            if tokens[:prefix_length] == self.generated_tokens_within_state:
+                result.add(tokens[len(self.generated_tokens_within_state)])
+        return result
+
     def generate(self, prompt) -> dict:
         immediate_transitions = {
-    State.EXPECTING_OPEN_BRACE: State.EXPECTING_NAME,
-    State.EXPECTING_NAME: State.EXPECTING_COLON,
-    State.EXPECTING_PARAMETERS: State.EXPECTING_COLON,
-    State.EXPECTING_OPEN_PARAMETER_BRACE: State.EXPECTING_PARAMETER_KEY,
-    State.EXPECTING_CLOSING_PARAMETER_BRACE: State.EXPECTING_CLOSING_BRACE,
-    State.EXPECTING_CLOSING_BRACE: State.DONE,
-}
-        input_ids = self.model.encode(prompt)
+            State.EXPECTING_OPEN_BRACE: State.EXPECTING_NAME,
+            State.EXPECTING_OPEN_PARAMETER_BRACE: State.EXPECTING_PARAMETER_KEY,
+            State.EXPECTING_CLOSING_PARAMETER_BRACE: State.EXPECTING_CLOSING_BRACE,
+            State.EXPECTING_CLOSING_BRACE: State.DONE,
+        }
+        # States that produce a fixed multi-token sequence
+        fixed_sequence_states = {
+            State.EXPECTING_NAME: (self.encoded_name, State.EXPECTING_COLON),
+            State.EXPECTING_PARAMETERS: (self.encoded_parameters, State.EXPECTING_COLON),
+        }
+
+        input_ids = self.model.encode(prompt).tolist()[0]
         result = {"prompt": prompt, "name": "", "parameters": {}}
         previous_state = None
         while self.current_state != State.DONE:
-            valid_tokens = self.valid_tokens_per_state[self.current_state]
+            state_at_start = self.current_state 
+            print(self.current_state)
+            if self.current_state in fixed_sequence_states:
+                target_seq, _ = fixed_sequence_states[self.current_state]
+                valid_tokens = self._compute_tier2_tokens(target_seq)
+            elif self.current_state == State.INSIDE_FUNCTION_NAME:
+                valid_tokens = self._valid_function_name_tokens()
+            elif self.current_state == State.EXPECTING_PARAMETER_KEY:
+                valid_tokens = self._valid_parameter_key_tokens()
+            else:
+                valid_tokens = self.valid_tokens_per_state[self.current_state]
+            # --- 2. Get logits, mask, pick token ---
             logits = self.model.get_logits_from_input_ids(input_ids)
             clean_tokens = self._mask_logits(logits, valid_tokens)
-            highest_token_score = np.argmax(clean_tokens)
+            highest_token_score = int(np.argmax(clean_tokens))
             input_ids.append(highest_token_score)
-            
-            if self.current_state == State.EXPECTING_COLON:
+            print(f"State: {self.current_state.value}, token picked: {highest_token_score}")
+
+            # --- 3. State transitions ---
+            if self.current_state in fixed_sequence_states:
+                target_seq, next_state = fixed_sequence_states[self.current_state]
+                self.position_within_state += 1
+                if self.position_within_state >= len(target_seq):
+                    self.position_within_state = 0
+                    self.current_state = next_state        
+            elif self.current_state == State.EXPECTING_COLON:
                 if previous_state == State.EXPECTING_NAME:
                     self.current_state = State.INSIDE_FUNCTION_NAME
                 elif previous_state == State.EXPECTING_PARAMETERS:
                     self.current_state = State.EXPECTING_OPEN_PARAMETER_BRACE
-            elif self.current_state in immediate_transitions:
-                self.current_state = immediate_transitions[self.current_state]
-            elif self.current_state == State.INSIDE_FUNCTION_NAME:
-                self.generated_tokens_within_state.append(highest_token_score)
-                if self.generated_tokens_within_state in self.encoded_function_names.values():
-                    self.current_state = State.EXPECTING_COMMA
-                    for name, tokens in self.encoded_function_names.items():
-                        if tokens == self.generated_tokens_within_state:
-                            result["name"] = name
-                    self.generated_tokens_within_state = []  # reset for next state
             elif self.current_state == State.EXPECTING_COMMA:
                 if previous_state == State.INSIDE_FUNCTION_NAME:
                     self.current_state = State.EXPECTING_PARAMETERS
                 elif previous_state in {
                     State.INSIDE_PARAMETER_VALUE_NUMBER,
                     State.INSIDE_PARAMETER_VALUE_STRING,
-                    State.INSIDE_PARAMETER_VALUE_BOOLEAN
+                    State.INSIDE_PARAMETER_VALUE_BOOLEAN,
                 }:
                     self.current_state = State.EXPECTING_PARAMETER_KEY
-            previous_state = self.current_state
-    
-
+            elif self.current_state == State.INSIDE_FUNCTION_NAME:
+                print(f"  accumulated: {self.generated_tokens_within_state}")
+                print(f"  looking for: {list(self.encoded_function_names.values())}")
+                self.generated_tokens_within_state.append(highest_token_score)
+                if self.generated_tokens_within_state in self.encoded_function_names.values():
+                    for name, tokens in self.encoded_function_names.items():
+                        if tokens == self.generated_tokens_within_state:
+                            result["name"] = name
+                            self.chosen_function_name = name
+                    self.generated_tokens_within_state = []
+                    self.current_state = State.EXPECTING_COMMA
+            elif self.current_state in immediate_transitions:
+                self.current_state = immediate_transitions[self.current_state]
+            elif self.current_state == State.EXPECTING_PARAMETER_KEY:
+                self.generated_tokens_within_state.append(highest_token_score)
+                keys_dict = self.encoded_parameter_keys[self.chosen_function_name]
+                if self.generated_tokens_within_state in keys_dict.values():
+                    for key_name, tokens in keys_dict.items():
+                        if tokens == self.generated_tokens_within_state:
+                            self.current_parameter_key = key_name
+                    self.generated_tokens_within_state = []
+                    self.current_state = State.EXPECTING_COLON
+            previous_state = state_at_start
+        return result

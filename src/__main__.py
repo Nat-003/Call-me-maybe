@@ -25,8 +25,10 @@ def main() -> None:
         vocab = vocab_loader(model)
         decoder = Decoder(model, vocab, function_definition)
         
-        decoder.generate("test")
-            
+        result = decoder.generate("What is the sum of 2 and 3?")
+        print(result) 
+        # kk = decoder._valid_function_name_tokens()
+        # print(kk)
     except FileNotFoundError:
         print("Invalide fiel path")
 if __name__ == "__main__":
