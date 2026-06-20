@@ -20,15 +20,13 @@ def main() -> None:
         if function_definition is None or function_calling is None:
             return
         model = Small_LLM_Model()
-        for prompt in function_calling:
-            built_prompt = build_prompt(function_definition, prompt)
         vocab = vocab_loader(model)
         decoder = Decoder(model, vocab, function_definition)
         
-        result = decoder.generate("What is the sum of 2 and 3?")
-        print(result) 
-        # kk = decoder._valid_function_name_tokens()
-        # print(kk)
+        for prompt in function_calling:
+            prompt_f = build_prompt(function_definition, prompt)
+            result = decoder.generate(prompt_f)
+            print(result)
     except FileNotFoundError:
         print("Invalide fiel path")
 if __name__ == "__main__":

@@ -40,6 +40,7 @@ class Decoder:
                 key: self.model.encode('"' + key + '"').tolist()[0]
                 for key in func.parameters.keys()
             }
+        self.used_parameter_keys = []
         self.current_parameter_key = "" 
         self.chosen_function_name = ""
         self.generated_tokens_within_state = []
@@ -98,7 +99,7 @@ class Decoder:
         for token_id, token_str in self.vocab.items():
             if token_str != "" and all(c.isdigit() or c == '.' or  c == '-' for c in token_str):
                 result.add(token_id)
-        return result | self._get_tokens_for_string(",") | self._get_tokens_for_string("}")
+        return result
 
     def _get_boolean_tokens(self) -> set[int]:
         result = set()
@@ -120,14 +121,25 @@ class Decoder:
             return result
         
         prefix_length = len(self.generated_tokens_within_state)
-        for encoded_key in self.encoded_parameter_keys[self.chosen_function_name].values():
+        for key_name, encoded_key in self.encoded_parameter_keys[self.chosen_function_name].items():
+            if key_name in self.used_parameter_keys:
+                continue  # skip used keys
             if encoded_key[:prefix_length] == self.generated_tokens_within_state:
                 if prefix_length < len(encoded_key):
                     result.add(encoded_key[prefix_length])
         return result
 
-    def _get_valid_tokens_for_function():
-        pass
+    def _valid_value_terminators(self) -> set[int]:
+        result = set()
+        for func in self.function_definitions:
+            if func.name == self.chosen_function_name:
+                total_keys = len(func.parameters)
+                if len(self.used_parameter_keys) < total_keys:
+                    return self._get_tokens_for_string(",")
+                else:
+                    return self._get_tokens_for_string("}")
+        return result
+
 
     def _mask_logits(self ,logits: Any, valid_tokens: set[int]) -> Any:
         arr = np.array(logits)
@@ -144,7 +156,18 @@ class Decoder:
                 result.add(tokens[len(self.generated_tokens_within_state)])
         return result
 
+    def _debug(self,target):
+        for token_id, token_str in self.vocab.items():
+            if token_id == target:
+                print(f"the word/sub word is {token_str}")
+
     def generate(self, prompt) -> dict:
+        self.current_state = State.EXPECTING_OPEN_BRACE
+        self.used_parameter_keys = []
+        self.generated_tokens_within_state = []
+        self.position_within_state = 0
+        self.chosen_function_name = ""
+        self.current_parameter_key = ""
         immediate_transitions = {
             State.EXPECTING_OPEN_BRACE: State.EXPECTING_NAME,
             State.EXPECTING_OPEN_PARAMETER_BRACE: State.EXPECTING_PARAMETER_KEY,
@@ -172,6 +195,8 @@ class Decoder:
                 valid_tokens = self._valid_function_name_tokens()
             elif self.current_state == State.EXPECTING_PARAMETER_KEY:
                 valid_tokens = self._valid_parameter_key_tokens()
+            elif self.current_state == State.INSIDE_PARAMETER_VALUE_NUMBER:
+                valid_tokens = self.valid_tokens_per_state[State.INSIDE_PARAMETER_VALUE_NUMBER] | self._valid_value_terminators()
             else:
                 valid_tokens = self.valid_tokens_per_state[self.current_state]
 
@@ -180,7 +205,7 @@ class Decoder:
             clean_tokens = self._mask_logits(logits, valid_tokens)
             highest_token_score = int(np.argmax(clean_tokens))
             input_ids.append(highest_token_score)
-            print(f"State: {self.current_state.value}, token picked: {highest_token_score}")
+            print(f"State: {self.current_state.value}, token picked: {highest_token_score}, actual word/subword: {self.model.decode(highest_token_score)}")
 
             # --- 3. State transitions ---
             if self.current_state in fixed_sequence_states:
@@ -234,6 +259,7 @@ class Decoder:
                     for key_name, tokens in keys_dict.items():
                         if tokens == self.generated_tokens_within_state:
                             self.current_parameter_key = key_name
+                            self.used_parameter_keys.append(key_name)
                     self.generated_tokens_within_state = []
                     self.current_state = State.EXPECTING_COLON
             
