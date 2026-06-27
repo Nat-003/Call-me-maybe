@@ -22,11 +22,12 @@ def main() -> None:
         model = Small_LLM_Model()
         vocab = vocab_loader(model)
         decoder = Decoder(model, vocab, function_definition)
-        
         for prompt in function_calling:
             prompt_f = build_prompt(function_definition, prompt)
             result = decoder.generate(prompt_f)
             print(result)
+        # result = decoder._string_valid_parameter()
+        # print(result)
     except FileNotFoundError:
         print("Invalide fiel path")
 if __name__ == "__main__":
