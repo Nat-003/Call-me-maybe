@@ -169,10 +169,10 @@ class Decoder:
         else:
             return self.token_without_quote | quote_tokens
 
-    def _debug(self,target):
-        for token_id, token_str in self.vocab.items():
-            if token_id == target:
-                print(f"the word/sub word is {token_str}")
+    # def _debug(self,target):
+    #     for token_id, token_str in self.vocab.items():
+    #         if token_id == target:
+    #             print(f"the word/sub word is {token_str}")
 
     def generate(self, prompt) -> dict:
         self.current_state = State.EXPECTING_OPEN_BRACE
@@ -195,10 +195,11 @@ class Decoder:
         input_ids = self.model.encode(prompt).tolist()[0]
         result = {"prompt": prompt, "name": "", "parameters": {}}
         previous_state = None
-        MAX_NUMBER_TOKENS = 21
+        MAX_NUMBER_TOKENS = 10
+        MAX_STRING_TOKENS = 20
         while self.current_state != State.DONE:
             state_at_start = self.current_state
-            print(self.current_state)
+            # print(self.current_state)
 
             # --- 1. Get valid tokens for current state ---
             if self.current_state in fixed_sequence_states:
@@ -214,17 +215,24 @@ class Decoder:
                 else:
                     valid_tokens = self.valid_tokens_per_state[State.INSIDE_PARAMETER_VALUE_NUMBER] | self._valid_value_terminators()
             elif self.current_state == State.INSIDE_PARAMETER_VALUE_STRING:
-                valid_tokens = self._string_valid_parameter()
+                if len(self.generated_tokens_within_state) >= MAX_STRING_TOKENS:
+                    valid_tokens = self.quote_tokens
+                else:
+                    valid_tokens = self._string_valid_parameter()
             else:
                 valid_tokens = self.valid_tokens_per_state[self.current_state]
                             
 
             # --- 2. Get logits, mask, pick token ---
-            logits = self.model.get_logits_from_input_ids(input_ids)
-            clean_tokens = self._mask_logits(logits, valid_tokens)
-            highest_token_score = int(np.argmax(clean_tokens))
+            # --- 2. Pick token: skip the model when only one is legal ---
+            if len(valid_tokens) == 1:
+                highest_token_score = next(iter(valid_tokens))
+            else:
+                logits = self.model.get_logits_from_input_ids(input_ids)
+                clean_tokens = self._mask_logits(logits, valid_tokens)
+                highest_token_score = int(np.argmax(clean_tokens))
             input_ids.append(highest_token_score)
-            print(f"State: {self.current_state.value}, token picked: {highest_token_score}, actual word/subword: {self.model.decode(highest_token_score)}")
+            # print(f"State: {self.current_state.value}, token picked: {highest_token_score}, actual word/subword: {self.model.decode(highest_token_score)}")
 
             # --- 3. State transitions ---
             if self.current_state in fixed_sequence_states:
@@ -243,7 +251,7 @@ class Decoder:
                     for func in self.function_definitions:
                         if func.name == self.chosen_function_name:
                             param_type = func.parameters[self.current_parameter_key].type
-                            print(f"  param_type: {param_type}")
+                            # print(f"  param_type: {param_type}")
                             if param_type == "number":
                                 self.current_state = State.INSIDE_PARAMETER_VALUE_NUMBER
                             elif param_type == "string":
@@ -288,14 +296,14 @@ class Decoder:
                     decoded_para = self.model.decode(self.generated_tokens_within_state)
                     converted = float(decoded_para)
                     result["parameters"][self.current_parameter_key] = converted
-                    print(f"token_str: {token_str} decoded para: {decoded_para}")
+                    # print(f"token_str: {token_str} decoded para: {decoded_para}")
                     self.generated_tokens_within_state = []
                     self.current_state = State.EXPECTING_PARAMETER_KEY
                 elif token_str == "}":
                     decoded_para = self.model.decode(self.generated_tokens_within_state)
                     converted = float(decoded_para)
                     result["parameters"][self.current_parameter_key] = converted
-                    print(f"token_str: {token_str} decoded para: {decoded_para}")
+                    # print(f"token_str: {token_str} decoded para: {decoded_para}")
                     self.generated_tokens_within_state = []
                     self.current_state = State.EXPECTING_CLOSING_BRACE
                 else:
