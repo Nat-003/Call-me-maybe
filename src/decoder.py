@@ -146,7 +146,6 @@ class Decoder:
                     return self._get_tokens_for_string("}")
         return result
 
-
     def _mask_logits(self ,logits: Any, valid_tokens: set[int]) -> Any:
         arr = np.array(logits)
         cpy = arr.copy()
@@ -163,16 +162,10 @@ class Decoder:
         return result
 
     def _string_valid_parameter(self) -> set[int]:
-        quote_tokens = set(self._get_tokens_for_string('"'))
-        if quote_tokens.isdisjoint(self.generated_tokens_within_state):
-            return quote_tokens
+        if self.quote_tokens.isdisjoint(self.generated_tokens_within_state):
+            return self.quote_tokens
         else:
-            return self.token_without_quote | quote_tokens
-
-    # def _debug(self,target):
-    #     for token_id, token_str in self.vocab.items():
-    #         if token_id == target:
-    #             print(f"the word/sub word is {token_str}")
+            return self.token_without_quote | self.quote_tokens
 
     def generate(self, prompt) -> dict:
         self.current_state = State.EXPECTING_OPEN_BRACE
@@ -183,7 +176,6 @@ class Decoder:
         self.current_parameter_key = ""
         immediate_transitions = {
             State.EXPECTING_OPEN_BRACE: State.EXPECTING_NAME,
-            State.EXPECTING_OPEN_PARAMETER_BRACE: State.EXPECTING_PARAMETER_KEY,
             State.EXPECTING_CLOSING_PARAMETER_BRACE: State.EXPECTING_CLOSING_BRACE,
             State.EXPECTING_CLOSING_BRACE: State.DONE,
         }
@@ -219,9 +211,8 @@ class Decoder:
                     valid_tokens = self.quote_tokens
                 else:
                     valid_tokens = self._string_valid_parameter()
-            else:
-                valid_tokens = self.valid_tokens_per_state[self.current_state]
-                            
+            else: 
+                valid_tokens = self.valid_tokens_per_state[self.current_state]                  
 
             # --- 2. Get logits, mask, pick token ---
             # --- 2. Pick token: skip the model when only one is legal ---
@@ -279,6 +270,14 @@ class Decoder:
                     self.generated_tokens_within_state = []
                     self.current_state = State.EXPECTING_COMMA
 
+            elif self.current_state == State.EXPECTING_OPEN_PARAMETER_BRACE:
+                for func in self.function_definitions:
+                    if func.name == self.chosen_function_name:
+                        if len(func.parameters) == 0:
+                            self.current_state = State.EXPECTING_CLOSING_PARAMETER_BRACE
+                        else:
+                            self.current_state = State.EXPECTING_PARAMETER_KEY
+
             elif self.current_state == State.EXPECTING_PARAMETER_KEY:
                 self.generated_tokens_within_state.append(highest_token_score)
                 keys_dict = self.encoded_parameter_keys[self.chosen_function_name]
@@ -289,7 +288,7 @@ class Decoder:
                             self.used_parameter_keys.append(key_name)
                     self.generated_tokens_within_state = []
                     self.current_state = State.EXPECTING_COLON
-            
+
             elif self.current_state == State.INSIDE_PARAMETER_VALUE_NUMBER:
                 token_str = self.vocab[highest_token_score]
                 if token_str == ",":
